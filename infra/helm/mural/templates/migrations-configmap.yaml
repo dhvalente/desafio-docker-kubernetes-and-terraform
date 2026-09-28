@@ -1,0 +1,11 @@
+# As mesmas migrations de app/api/migrations/ (copiadas para
+# infra/helm/mural/files/migrations/ — ver README) viram um ConfigMap,
+# montado como volume no Job de migração em /migrations/*.sql.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mural.fullname" . }}-migrations
+  labels:
+    {{- include "mural.labels" . | nindent 4 }}
+data:
+  {{- (.Files.Glob "files/migrations/*.sql").AsConfig | nindent 2 }}

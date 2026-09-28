@@ -1,0 +1,76 @@
+# Compose só para RODAR E ENTENDER a aplicação (não é a entrega — ver infra/).
+# Usa imagens oficiais de propósito: go run, nginx e postgres "puros", sem
+# Dockerfile próprio. A ordem de subida é banco -> migração -> api -> web.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mural
+      POSTGRES_PASSWORD: mural
+      POSTGRES_DB: mural
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mural -d mural"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Roda todas as migrations de ./app/api/migrations, em ordem, e encerra.
+  # Só inicia depois que o banco sinaliza healthy (condition: service_healthy).
+  migrate:
+    image: postgres:16-alpine
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./app/api/migrations:/migrations:ro
+    environment:
+      PGPASSWORD: mural
+    entrypoint:
+      - sh
+      - -ce
+      - |
+        for f in $$(ls /migrations/*.sql | sort); do
+          echo "aplicando $$f"
+          psql -h db -U mural -d mural -v ON_ERROR_STOP=1 -f "$$f"
+        done
+
+  # Executa a API a partir do código-fonte (sem Dockerfile aqui, de propósito).
+  # Só sobe depois do banco pronto E da migração concluída com sucesso.
+  api:
+    image: golang:1.23-alpine
+    working_dir: /app
+    volumes:
+      - ./app/api:/app
+    environment:
+      DATABASE_URL: postgresql://mural:mural@db:5432/mural?sslmode=disable
+      PORT: "8080"
+    command: ["go", "run", "."]
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "8081:8080"
+
+  # Serve o front estático e faz proxy de /api para a API via ${API_UPSTREAM}
+  # (nginx.conf.template + envsubst, processado automaticamente pela imagem
+  # oficial). O front nunca conhece a URL absoluta da API.
+  web:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./app/web/index.html:/usr/share/nginx/html/index.html:ro
+      - ./app/web/app.js:/usr/share/nginx/html/app.js:ro
+      - ./app/web/styles.css:/usr/share/nginx/html/styles.css:ro
+      - ./app/web/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+    environment:
+      API_UPSTREAM: api:8080
+    depends_on:
+      - api
+    ports:
+      - "8080:8080"
+
+volumes:
+  db-data:

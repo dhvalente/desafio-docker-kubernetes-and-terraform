@@ -1,0 +1,90 @@
+# StatefulSet + PVC (não Deployment): o Postgres guarda os recados, o dado
+# tem que sobreviver a um restart do pod. O Service é headless (clusterIP:
+# None) porque é o Service "governante" exigido por um StatefulSet.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mural.postgresServiceName" . }}
+  labels:
+    {{- include "mural.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  clusterIP: None
+  selector:
+    {{- include "mural.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "mural.postgresServiceName" . }}
+  labels:
+    {{- include "mural.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  serviceName: {{ include "mural.postgresServiceName" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "mural.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgres
+  template:
+    metadata:
+      labels:
+        {{- include "mural.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mural.postgresSecretName" . }}
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mural.postgresSecretName" . }}
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mural.postgresSecretName" . }}
+                  key: POSTGRES_DB
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.user | quote }}]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.user | quote }}]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.postgres.resources | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.postgres.storageClassName | quote }}
+        resources:
+          requests:
+            storage: {{ .Values.postgres.storage }}

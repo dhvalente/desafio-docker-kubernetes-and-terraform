@@ -1,0 +1,24 @@
+{{- if .Values.autoscaling.enabled }}
+# Bônus: HPA na API. Requer metrics-server no cluster (kind não traz por
+# padrão — ver README para como instalar) para o HPA conseguir ler CPU.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "mural.apiServiceName" . }}
+  labels:
+    {{- include "mural.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "mural.apiServiceName" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}

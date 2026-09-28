@@ -1,0 +1,71 @@
+# Fricção 1: a API não cria a tabela sozinha. Este Job aplica as migrations;
+# a API só fica Ready quando a tabela existir (ver /readyz em app/api/main.go).
+#
+# DELIBERADAMENTE NÃO é um hook do Helm (helm.sh/hook). Um hook
+# post-install/post-upgrade só executa DEPOIS que o Helm termina de esperar
+# (--wait) os recursos "normais" (Deployments/StatefulSet) ficarem Ready —
+# mas a API nunca fica Ready sem a migração ter rodado antes. Com o Job como
+# hook post-install, isso é um deadlock: Helm trava esperando a API, e o Job
+# que destravaria a API só rodaria depois desse wait (que estoura o timeout).
+# Como recurso comum, o Job é criado junto com o resto e o próprio wait do
+# Helm acompanha os dois em paralelo: o Job espera o Postgres (pg_isready),
+# aplica o SQL (idempotente: CREATE TABLE IF NOT EXISTS / INSERT condicional)
+# e conclui; a API fica NotReady até lá e passa a Ready logo em seguida.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "mural.fullname" . }}-migrate
+  labels:
+    {{- include "mural.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        {{- include "mural.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: {{ .Values.migration.image }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mural.postgresSecretName" . }}
+                  key: DATABASE_URL
+            - name: PGHOST
+              value: {{ include "mural.postgresServiceName" . }}
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mural.postgresSecretName" . }}
+                  key: POSTGRES_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mural.postgresSecretName" . }}
+                  key: POSTGRES_PASSWORD
+          command:
+            - sh
+            - -ce
+            - |
+              until pg_isready -h "$PGHOST" -U "$PGUSER"; do
+                echo "aguardando postgres..."
+                sleep 2
+              done
+              for f in $(ls /migrations/*.sql | sort); do
+                echo "aplicando $f"
+                psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
+              done
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+          resources:
+            {{- toYaml .Values.migration.resources | nindent 12 }}
+      volumes:
+        - name: migrations
+          configMap:
+            name: {{ include "mural.fullname" . }}-migrations

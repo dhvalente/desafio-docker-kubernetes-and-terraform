@@ -1,0 +1,76 @@
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  api:
+    repository: mural-api
+    tag: local
+    pullPolicy: IfNotPresent
+  web:
+    repository: mural-web
+    tag: local
+    pullPolicy: IfNotPresent
+
+api:
+  replicaCount: 2
+  port: 8080
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 300m
+      memory: 128Mi
+
+web:
+  replicaCount: 2
+  port: 8080
+  resources:
+    requests:
+      cpu: 25m
+      memory: 16Mi
+    limits:
+      cpu: 150m
+      memory: 64Mi
+
+# Credencial do Postgres. NUNCA preencha "password" aqui e comite — este
+# values.yaml é versionado. O valor real é injetado em runtime via
+# `helm install --set postgres.password=...` (o Terraform gera uma senha
+# aleatória com o provider "random" e a passa dessa forma).
+postgres:
+  image: postgres:16-alpine
+  user: mural
+  password: ""
+  database: mural
+  storage: 1Gi
+  storageClassName: standard
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+migration:
+  image: postgres:16-alpine
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+ingress:
+  enabled: true
+  className: traefik
+  host: mural.localtest.me
+
+# Bônus: desligado por padrão. Ative com --set autoscaling.enabled=true
+# (requer metrics-server no cluster).
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 60
